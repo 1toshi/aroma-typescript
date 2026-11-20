@@ -1,0 +1,27 @@
+{
+  "name": "aroma-typescript",
+  "version": "0.1.0",
+  "description": "Aroma code recommendation via structural code search (Luan et al., OOPSLA 2019) for Python and TypeScript",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@lezer/common": "1.5.5",
+    "@lezer/javascript": "1.5.6",
+    "@lezer/python": "1.1.19"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}
