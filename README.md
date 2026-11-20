@@ -81,3 +81,7 @@ for (const query of queriesFromLines(index, { path, source }, changedLines)) {
 - **Recommendations are approximate.** Pruning keeps a token when any one of its features is still unmatched in the target, so a line can be kept for a single variable on it. Treat `added` lines as leads for a reviewer to judge, not as findings.
 - **Cost.** Indexing a Python and TypeScript monorepo (9,222 Python and TypeScript files, 64 MB, 57,770 methods after dropping 4,469 duplicates) takes about 55 seconds on one core and holds about 480 MB, including the sources. A search then takes about 70 ms and a recommendation about 80 ms. Nothing is cached between runs.
 - **Recall.** On the paper's Section 5 benchmark run over that monorepo (300 functions per language, 5-line queries), the function a query was cut from ranks first for 100% of contiguous and 99.6% to 100% of scattered line queries. For the same lines parsed alone as snippets it ranks first for 95.9% (Python) and 93.1% (TypeScript); the paper reports 97.5% for Python and 93.9% for JavaScript.
+
+## License
+
+[MIT](LICENSE)

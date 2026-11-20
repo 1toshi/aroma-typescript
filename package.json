@@ -2,6 +2,7 @@
   "name": "aroma-typescript",
   "version": "0.1.0",
   "description": "Aroma code recommendation via structural code search (Luan et al., OOPSLA 2019) for Python and TypeScript",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "exports": {
