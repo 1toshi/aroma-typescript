@@ -11,7 +11,7 @@ import {
 } from "../src/index.ts";
 import type { Language } from "../src/language.ts";
 import { python } from "../src/languages/python.ts";
-import { typescript } from "../src/languages/typescript.ts";
+import { typescript, typescriptFrontEnd } from "../src/languages/typescript.ts";
 import { label, type Node, type Token } from "../src/tree.ts";
 
 const file = (path: string, lines: string[]): SourceFile => ({ path, source: lines.join("\n") });
@@ -178,6 +178,61 @@ describe("typescript front end", () => {
     expect(names(banner!.body, false)).toEqual(
       expect.arrayContaining(["useState", "Alert", "onClose", "true", "false", "null"]),
     );
+  });
+});
+
+describe("splitting large functions into the functions they name", () => {
+  // A service factory: its methods are what callers use, so each is a method of its own.
+  const service = file("account.ts", [
+    "export const AccountService = ({ db }: Deps) => {",
+    "  const load = async (sid: string) => {",
+    "    const account = await db.account.findUniqueOrThrow({ where: { sid } });",
+    "    return account;",
+    "  };",
+    "  audit(db);",
+    "  return {",
+    "    load,",
+    "    rename: async function (sid: string, name: string) {",
+    "      const account = await load(sid);",
+    "      return db.account.update({ where: { id: account.id }, data: { name } });",
+    "    },",
+    "    count() {",
+    "      return [1, 2].map((n) => n * 2).length;",
+    "    },",
+    "  };",
+    "};",
+  ]);
+  const split = typescriptFrontEnd({ splitLines: 10 });
+
+  it("indexes each named inner function, and the rest of the outer one, as methods", () => {
+    const methods = methodsOf(split, service);
+    expect(methods.map(({ name, startLine, endLine }) => ({ name, startLine, endLine }))).toEqual([
+      { name: "AccountService", startLine: 1, endLine: 17 },
+      { name: "AccountService.load", startLine: 2, endLine: 5 },
+      { name: "AccountService.rename", startLine: 9, endLine: 12 },
+      { name: "AccountService.count", startLine: 13, endLine: 15 },
+    ]);
+    const outer = methods[0]!;
+    // The inner bodies are gone from the outer method; the anonymous `map` callback stays in `count`.
+    expect(tokens(outer.body).map((token) => token.text)).not.toContain("findUniqueOrThrow");
+    expect(tokens(methods[3]!.body).map((token) => token.text)).toContain("map");
+    // `db` is a parameter of the factory, not of the inner method, so it keeps its name there.
+    // (`sid` in `{ where: { sid } }` is shorthand, which Lezer parses as a property name.)
+    expect(names(methods[1]!.body, false)).toContain("db");
+    expect(names(methods[1]!.body, true)).toEqual(["account"]);
+  });
+
+  it("keeps functions shorter than the split size whole", () => {
+    expect(methodsOf(typescript, service).map((method) => method.name)).toEqual(["AccountService"]);
+  });
+
+  it("finds the inner method that contains the query, not the factory around it", () => {
+    const index = buildIndex([service], { languages: [split] });
+    const query = queryFromSnippet(index, "const account = await db.account.findUniqueOrThrow({ where: { sid } });", {
+      language: "typescript",
+      globals: new Set(["db"]),
+    })!;
+    expect(search(index, query)[0]).toMatchObject({ method: { name: "AccountService.load" }, similarity: 1 });
   });
 });
 

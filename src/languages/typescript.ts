@@ -76,16 +76,52 @@ function isFunction(node: { name: string; node: SyntaxNode }): boolean {
   );
 }
 
+/** Declarations that bind the function they hold to a name. */
+const BINDINGS: Record<string, true> = {
+  VariableDeclaration: true,
+  Property: true,
+  PropertyDeclaration: true,
+};
+
+/**
+ * The functions a body defines under a name of their own, such as a factory's
+ * `const load = async () => {}` or the `get() {}` of the object it returns.
+ * Anonymous callbacks, and everything inside any function, are left in place.
+ */
+function namedFunctionsIn(body: SyntaxNode): SyntaxNode[] {
+  const found: SyntaxNode[] = [];
+  const visit = (node: SyntaxNode) => {
+    for (let child = node.firstChild; child; child = child.nextSibling) {
+      if (!isFunction(child)) {
+        visit(child);
+        continue;
+      }
+      // Declarations and methods have names of their own; a function expression
+      // has one only when a declaration or property binds it.
+      const isExpression = child.name === "ArrowFunction" || child.name === "FunctionExpression";
+      if (!isExpression || BINDINGS[child.parent?.name ?? ""]) {
+        found.push(child);
+      }
+    }
+  };
+  visit(body);
+  return found;
+}
+
 /**
  * The names a node declares anywhere inside it, which are its local variables;
  * Lezer marks each declaration site. Imported names are kept apart: an import
- * names the same thing in every file, so it is never local.
+ * names the same thing in every file, so it is never local. Declarations inside
+ * `excluded` nodes are not counted.
  */
-function namesUnder(source: string, root: SyntaxNode) {
+function namesUnder(source: string, root: SyntaxNode, excluded: readonly SyntaxNode[] = []) {
   const declared = new Set<string>();
   const imported = new Set<string>();
   descendants(root, (cursor) => {
-    if (cursor.name !== "VariableDefinition") {
+    if (
+      cursor.name !== "VariableDefinition" ||
+      excluded.some((node) => cursor.from >= node.from && cursor.to <= node.to)
+    ) {
       return;
     }
     const parent = cursor.node.parent;
@@ -113,34 +149,39 @@ function nameOf(source: string, node: SyntaxNode): string {
   return parts.length === 0 ? "<anonymous>" : parts.join(".");
 }
 
-function methodsOf(source: string, path: string): ParsedMethod[] {
+function methodsOf(source: string, path: string, splitLines: number): ParsedMethod[] {
   const lineOf = lineIndex(source);
   const methods: ParsedMethod[] = [];
+  const add = (definition: SyntaxNode) => {
+    // A body is a block or, for an arrow function, the expression after the
+    // arrow. Overloads and abstract methods have neither.
+    const body = definition.lastChild;
+    if (!body || (body.name !== "Block" && definition.name !== "ArrowFunction")) {
+      return;
+    }
+    const span = lineSpan(source, definition, lineOf);
+    const inner = span.endLine - span.startLine + 1 >= splitLines ? namedFunctionsIn(body) : [];
+    const isInner = (node: { name: string; from: number; to: number }) =>
+      inner.some((fn) => fn.name === node.name && fn.from === node.from && fn.to === node.to);
+    const { declared } = namesUnder(source, definition, inner);
+    const tree = simplify(
+      source,
+      body,
+      inner.length === 0 ? GRAMMAR : { ...GRAMMAR, skip: isInner },
+      lineOf,
+      (name) => VARIABLES.has(name.name) && declared.has(source.slice(name.from, name.to)),
+    );
+    if (tree) {
+      methods.push({ name: nameOf(source, definition), ...span, body: tree });
+    }
+    for (const fn of inner) {
+      add(fn);
+    }
+  };
   const cursor = parserFor(path).parse(source).cursor();
   const walk = () => {
     if (isFunction(cursor)) {
-      const definition = cursor.node;
-      // A body is a block or, for an arrow function, the expression after the
-      // arrow. Overloads and abstract methods have neither.
-      const body = definition.lastChild;
-      if (!body || (body.name !== "Block" && definition.name !== "ArrowFunction")) {
-        return;
-      }
-      const { declared } = namesUnder(source, definition);
-      const tree = simplify(
-        source,
-        body,
-        GRAMMAR,
-        lineOf,
-        (name) => VARIABLES.has(name.name) && declared.has(source.slice(name.from, name.to)),
-      );
-      if (tree) {
-        methods.push({
-          name: nameOf(source, definition),
-          ...lineSpan(source, definition, lineOf),
-          body: tree,
-        });
-      }
+      add(cursor.node);
       return;
     }
     if (cursor.firstChild()) {
@@ -162,12 +203,22 @@ function isCallee(node: SyntaxNode): boolean {
   );
 }
 
+export type TypescriptOptions = {
+  /**
+   * A function at least this many lines long that defines named functions,
+   * such as a service factory or a large component, is indexed as one method
+   * per named function plus the rest of its own body. `Infinity` keeps every
+   * outermost function whole.
+   */
+  splitLines?: number;
+};
+
 /** TypeScript and JavaScript, with JSX in `.tsx`, `.jsx`, and `.js` files. */
-export const typescript: Language = {
+export const typescriptFrontEnd = ({ splitLines = 80 }: TypescriptOptions = {}): Language => ({
   id: "typescript",
   extensions: [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"],
   memberAccessLabels: new Set(["#.#", "#?.#"]),
-  parseMethods: methodsOf,
+  parseMethods: (source, path) => methodsOf(source, path, splitLines),
   parseSnippet(source, options = {}) {
     const root = parserFor(options.path).parse(source).topNode;
     const { declared, imported } = namesUnder(source, root);
@@ -184,4 +235,7 @@ export const typescript: Language = {
       return !(imported.has(word) || looksGlobal(word, options.globals) || isCallee(name.node));
     });
   },
-};
+});
+
+/** The TypeScript front end with its default split size. */
+export const typescript: Language = typescriptFrontEnd();

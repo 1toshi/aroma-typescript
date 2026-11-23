@@ -18,6 +18,11 @@ export {
 export type { Language, ParsedMethod, SnippetOptions } from "./language.ts";
 export { LANGUAGES } from "./languages/index.ts";
 export {
+  typescript,
+  typescriptFrontEnd,
+  type TypescriptOptions,
+} from "./languages/typescript.ts";
+export {
   recommend,
   type Recommendation,
   type RecommendedLine,
